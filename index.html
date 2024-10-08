@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Full Fingerprint with WebAssembly and Traps</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background-color: #f5f5f5;
+            margin: 30px;
+        }
+        h1, h2 {
+            color: #333;
+        }
+        pre {
+            background-color: #eaeaea;
+            padding: 10px;
+            border-radius: 8px;
+            overflow: auto;
+            font-size: 14px;
+        }
+        .container {
+            max-width: 800px;
+            margin: auto;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Full Fingerprint with WebAssembly and Traps</h1>
+        <p>This version includes navigator manipulation detection, debugger traps, and localStorage tampering checks along with the WebAssembly fingerprint.</p>
+        
+        <h2>Device Fingerprint</h2>
+        <pre id="fingerprintJson">Loading...</pre>
+
+        <script>
+            // Функция хеширования строки с использованием SHA-256
+            async function hash(str) {
+                const buffer = new TextEncoder().encode(str);
+                const digest = await crypto.subtle.digest("SHA-256", buffer);
+                return Array.from(new Uint8Array(digest)).map(b => b.toString(16).padStart(2, '0')).join('');
+            }
+
+            // Вставьте сюда ваш Base64-код из `simple.wasm`
+            const wasmBase64 = `AGFzbQEAAAABBgFgAX8BfwMCAQAHCgEGdW5pcXVlAAAKPgE8AgF/An1DAACAPyECQQAhASAAskOkcC1AlSEDA0AgAiABsiADlJIhAiABQQFqIQEgAUHoB0gNAAsgAqgL`;
+
+            function base64ToUint8Array(base64) {
+                const binaryString = atob(base64);
+                const len = binaryString.length;
+                const bytes = new Uint8Array(len);
+                for (let i = 0; i < len; i++) {
+                    bytes[i] = binaryString.charCodeAt(i);
+                }
+                return bytes;
+            }
+
+            async function getUniqueWasmFingerprint(hardwareConcurrency) {
+                try {
+                    const wasmCode = base64ToUint8Array(wasmBase64);
+                    const wasmModule = await WebAssembly.compile(wasmCode);
+                    const instance = await WebAssembly.instantiate(wasmModule);
+                    return instance.exports.unique(hardwareConcurrency).toString();  // Использование параметра hardwareConcurrency
+                } catch (error) {
+                    console.error("Ошибка выполнения WebAssembly:", error);
+                    return "WASM Error";
+                }
+            }
+
+            // Получение стабильного отпечатка с помощью Canvas
+            async function getCanvasFingerprint() {
+                const canvas = document.createElement('canvas');
+                const ctx = canvas.getContext('2d');
+                canvas.width = 200;
+                canvas.height = 200;
+
+                ctx.textBaseline = "top";
+                ctx.font = "16px 'monospace'";
+                ctx.fillStyle = "#000000";
+                ctx.fillRect(20, 20, 160, 160);
+                ctx.fillStyle = "#FFFFFF";
+                ctx.fillRect(50, 50, 100, 100);
+
+                const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+                const pixelString = Array.from(imageData.data).join("");
+                return await hash(pixelString);
+            }
+
+            // Ловушка: Проверка манипуляции с `navigator`
+            function detectNavigatorManipulation() {
+                const standardProperties = [
+                    'userAgent', 'platform', 'language', 'languages', 'hardwareConcurrency', 'cookieEnabled', 'onLine'
+                ];
+                const missingProperties = standardProperties.filter(prop => !(prop in navigator));
+                if (missingProperties.length > 0) return true;
+
+                const suspiciousValues = {
+                    userAgent: navigator.userAgent,
+                    platform: navigator.platform,
+                    hardwareConcurrency: navigator.hardwareConcurrency,
+                };
+
+                if (!/Mozilla/.test(suspiciousValues.userAgent)) return true;
+                if (!/Mac|Win|Linux|iPhone|iPad|Android/.test(suspiciousValues.platform)) return true;
+                if (typeof suspiciousValues.hardwareConcurrency !== 'number' || suspiciousValues.hardwareConcurrency <= 0) return true;
+
+                return false;
+            }
+
+            // Ловушка: Проверка на использование отладки
+            function detectDebuggerTrap() {
+                let debugDetected = false;
+
+                const checkDebugger = () => {
+                    const start = Date.now();
+                    debugger;  // Ловушка, чтобы проверить наличие отладчика
+                    if (Date.now() - start > 100) {
+                        debugDetected = true;
+                    }
+                };
+
+                for (let i = 0; i < 5; i++) {
+                    checkDebugger();
+                }
+
+                return debugDetected;
+            }
+
+            // Ловушка: Проверка на манипуляцию с `localStorage`
+            function detectStorageManipulation() {
+                const trapKey = 'trapParameter';
+                const trapValue = 'trapValue12345';
+
+                try {
+                    localStorage.setItem(trapKey, trapValue);
+                    const storedValue = localStorage.getItem(trapKey);
+                    return storedValue !== trapValue;
+                } catch (e) {
+                    return true;
+                } finally {
+                    localStorage.removeItem(trapKey);
+                }
+            }
+
+            // Получение полного отпечатка устройства
+            async function getFingerprint() {
+                const canvasHash = await getCanvasFingerprint();
+                const hardwareConcurrency = navigator.hardwareConcurrency || 1;
+                const wasmFingerprint = await getUniqueWasmFingerprint(hardwareConcurrency);
+
+                const language = (navigator.language || navigator.userLanguage).split('-')[0];
+                const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+
+                // Ловушки
+                const navigatorManipulation = detectNavigatorManipulation();
+                const debuggerTrap = detectDebuggerTrap();
+                const storageManipulation = detectStorageManipulation();
+
+                const fingerprintString = `${canvasHash}-${wasmFingerprint}-${hardwareConcurrency}-${language}-${timezone}-${navigatorManipulation}-${debuggerTrap}-${storageManipulation}`;
+                const finalFingerprint = await hash(fingerprintString);
+
+                return { 
+                    canvasHash, wasmFingerprint, hardwareConcurrency, language, timezone,
+                    navigatorManipulation, debuggerTrap, storageManipulation, finalFingerprint 
+                };
+            }
+
+            getFingerprint().then(fingerprintData => {
+                document.getElementById('fingerprintJson').innerText = JSON.stringify(fingerprintData, null, 4);
+            }).catch(error => {
+                console.error("Ошибка получения отпечатка:", error);
+                document.getElementById('fingerprintJson').innerText = `Error: ${error.message}`;
+            });
+        </script>
+    </div>
+</body>
+</html>
